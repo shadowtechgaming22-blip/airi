@@ -84,6 +84,36 @@ export const useProviderConfigStore = defineStore('provider-config', () => {
     if (!definition)
       continue
 
+    // NOTICE:
+    // Why this workaround is needed: ollama (and similar local providers)
+    // used to default to http://localhost:11434/v1/. When the same airi
+    // instance is reached through the cloudflared tunnel at
+    // https://airi.cpainbox.com from a remote network, that absolute
+    // localhost points to the visitor's own machine. Rewriting it to the
+    // same-origin /api/ollama/v1/ path here ensures previously saved
+    // configs keep working remotely.
+    // Root cause summary: legacy default pointed at the visitor's
+    // localhost, not the server.
+    // Source/context: cloudflared airi-wb tunnel + vite proxy 2026-10-06.
+    // Removal condition: keep the migration. New defaults already point
+    // at the relative path; this only rescues older saved values.
+    if (definitionId === 'ollama' && config && typeof config === 'object') {
+      const c = config as Record<string, unknown>
+      if (typeof c.baseUrl === 'string') {
+        const isLocalhost = (() => {
+          try {
+            const u = new URL(c.baseUrl, 'http://placeholder.invalid/')
+            return u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '[::1]'
+          }
+          catch {
+            return false
+          }
+        })()
+        if (isLocalhost)
+          c.baseUrl = '/api/ollama/v1/'
+      }
+    }
+
     providers.value[providerId] = {
       id: providerId,
       definitionId,
@@ -103,6 +133,31 @@ export const useProviderConfigStore = defineStore('provider-config', () => {
     }
     else if (!provider.configuredBy) {
       provider.configuredBy = 'user'
+    }
+
+    // NOTICE:
+    // Why this workaround is needed: same migration as in the legacy
+    // import block above. The newer settings/providers/configured
+    // localStorage key can also hold an absolute localhost baseUrl
+    // written by the previous default. Convert it to the same-origin
+    // /api/ollama/v1/ path so the cloudflared-tunneled office view
+    // keeps working without a manual reset.
+    // Source/context: see legacy import migration above, 2026-10-06.
+    if (provider.definitionId === 'ollama' && provider.config && typeof provider.config === 'object') {
+      const c = provider.config as Record<string, unknown>
+      if (typeof c.baseUrl === 'string') {
+        const isLocalhost = (() => {
+          try {
+            const u = new URL(c.baseUrl, 'http://placeholder.invalid/')
+            return u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '[::1]'
+          }
+          catch {
+            return false
+          }
+        })()
+        if (isLocalhost)
+          c.baseUrl = '/api/ollama/v1/'
+      }
     }
   }
 
