@@ -80,6 +80,48 @@ export default defineConfig({
     },
   },
   server: {
+    // NOTICE:
+    // Why this workaround is needed: tunneled requests from the public
+    // trycloudflare.com host (and any future named-tunnel host) are blocked
+    // by Vite 8's default host allowlist check.
+    // Root cause summary: Vite 8 added a security header check; only loopback
+    // and common LAN hosts are allowed by default.
+    // Source/context: vite.config.ts; cloudflared quick tunnel 2026-10-06.
+    // Removal condition: tighten allowedHosts back to a list once the
+    // canonical public hostname is fixed and there is no need to accept
+    // arbitrary tunneled hosts.
+    allowedHosts: ['airi.cpainbox.com', '.cpainbox.com', 'localhost', '127.0.0.1', '192.168.68.61', '0.0.0.0'],
+    host: true,
+    cors: {
+      // NOTICE: Allow POSTs from the public airi.cpainbox.com origin so the
+      // browser's chat requests pass Vite 8's default same-origin check
+      // (which only permits loopback by default). 2026-10-06.
+      origin: true,
+      credentials: true,
+    },
+    proxy: {
+      // Proxy OpenAI-compatible Ollama calls through Vite so the browser
+      // (local or public via Cloudflare Tunnel) can talk to localhost:11434
+      // without CORS or a second tunnel. Source/context: 2026-10-06 airi
+      // local setup, see LOCAL-BUILD-NOTES.md.
+      //
+      // NOTICE: The `configure` callback rewrites the upstream request to
+      // strip the browser's Origin/Referer headers. Ollama's default
+      // OLLAMA_ORIGINS only allows loopback origins and would otherwise
+      // 403 POSTs coming through the tunnel. 2026-10-06.
+      '/api/ollama': {
+        target: 'http://localhost:11434',
+        changeOrigin: true,
+        secure: false,
+        rewrite: (path: string) => path.replace(/^\/api\/ollama/, ''),
+        configure: (proxy: any) => {
+          proxy.on('proxyReq', (proxyReq: any) => {
+            proxyReq.removeHeader('origin')
+            proxyReq.removeHeader('referer')
+          })
+        },
+      },
+    },
     fs: {
       // To mute errors like:
       //   The request id ".../node_modules/@fontsource/sniglet/files/sniglet-latin-400-normal.woff" is outside of Vite serving allow list.

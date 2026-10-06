@@ -11,8 +11,20 @@ type OllamaReasoningEffort = 'high' | 'low' | 'medium' | 'none'
 type OllamaThinkingMode = 'auto' | 'disable' | 'enable' | 'high' | 'low' | 'medium'
 
 const ollamaConfigSchema = z.object({
+  // NOTICE:
+  // Why this workaround is needed: when airi is served through the
+  // cloudflared tunnel at https://airi.cpainbox.com, the default
+  // http://localhost:11434/v1/ would point to the visitor's own localhost
+  // (their office machine), not this server. The relative default below
+  // resolves against the current page origin and hits the vite proxy at
+  // /api/ollama, which forwards to local ollama.
+  // Root cause summary: https-only office access; absolute localhost fails.
+  // Source/context: vite.config.ts proxy block; cloudflared airi-wb tunnel
+  // 2026-10-06.
+  // Removal condition: leave relative by default. Anyone running ollama
+  // directly on the same machine can still type http://localhost:11434/v1/.
   baseUrl: z.string()
-    .default('http://localhost:11434/v1/'),
+    .default('/api/ollama/v1/'),
   thinkingMode: z.enum(['auto', 'disable', 'enable', 'low', 'medium', 'high'])
     .default('auto'),
   headers: z.record(z.string(), z.string())
@@ -121,7 +133,24 @@ export const providerOllama = defineProvider<OllamaConfig, 'ollama'>({
       }),
   }),
   createProvider(config) {
-    const baseProvider = createOllama('', config.baseUrl)
+    // NOTICE:
+    // Why this workaround is needed: a previous session may have stored
+    // http://localhost:11434/v1/ as baseUrl. When the office browser
+    // reads that, localhost points to the office machine, not the airi
+    // server. Rewriting localhost-style URLs to the relative /api/ollama
+    // path here keeps both old and new configs working.
+    // Source/context: ollama provider default + vite proxy 2026-10-06.
+    const isLocalhost = (() => {
+      try {
+        const u = new URL(config.baseUrl ?? '', 'http://placeholder.invalid/')
+        return u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '[::1]'
+      }
+      catch {
+        return false
+      }
+    })()
+    const effectiveBaseUrl = isLocalhost ? '/api/ollama/v1/' : config.baseUrl
+    const baseProvider = createOllama('', effectiveBaseUrl)
 
     return {
       ...baseProvider,
